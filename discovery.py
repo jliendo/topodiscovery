@@ -115,16 +115,20 @@ class Discovery( EventMixin ):
                 pkt.data = bytes(lldp_p)
                 event.connection.send(pkt)
 
-    def graph(self):
+    def graph(self, tree=True):
         """
         Draws the current view of the topology. No hosts, just switches
         """
-        pos = nx.circular_layout(self.topo)
+        if tree:
+            pos = nx.graphviz_layout(self.topo, prog='dot')
+            offset = 10
+        else:
+            pos = nx.circular_layout(self.topo)
+            offset = 0.05
         nx.draw(self.topo, pos)
         node_labels = dict([(n,d['link_to']) for n,d in self.topo.nodes(data=True)])
 
         
-        offset = 0.05
         pos_labels = {}
         keys = pos.keys()
         for key in keys:
