@@ -19,6 +19,9 @@ class Discovery( EventMixin ):
         # send lldp every ldp ttl seconds
         self.lldp_ttl = 1
         core.openflow.addListeners(self)
+        # XXX what should be the link_collector interval???
+        Timer(self.lldp_ttl * 3, self.link_collector, recurring = True)
+        log.debug('Link collector started')
 
 
     def _handle_ConnectionUp(self, event):
@@ -45,7 +48,13 @@ class Discovery( EventMixin ):
 
     def _handle_PortStatus(self, event):
         #XXX what to do in case of ports going down/up
-        pass
+        if event.added:
+            status = 'Added'
+        elif event.deleted:
+            status = "Deleted"
+        else:
+            status = 'Modified'
+        log.debug("Switch %s Port %s Status %s" % (event.dpid, event.port, status))
 
 
     def _handle_PacketIn(self, event):
@@ -56,6 +65,67 @@ class Discovery( EventMixin ):
         # if pkt is LLDP then use it to manage topology view 
         if pkt.type == 0x88cc: 
             self.manage_topology(pkt, event.dpid, event.port)
+
+
+    def find_linking_ports(self, n1, n2):
+        """
+        returns the port numbers that links node1 and node2 in edge
+        edge is a tuple, it may have attributes
+        """
+        p1, p2 = (None, None)
+        # XXX There has to be a better way to find the linking ports...
+        # works on node1
+        for i in self.topo.node[n1]['link_to']:
+            p, n = i
+            if n == n2: 
+                p1 = p
+                break
+        # works on node2
+        for i in self.topo.node[n2]['link_to']:
+            p, n = i
+            if n == n1: 
+                p2 = p
+                break
+        # found ports
+        return (p1,p2)
+
+    def delete_linking_ports(self, n1, p1, n2, p2):
+        """
+        deletes the linking information between two nodes
+        """
+        # XXX There has to be a better way to do this...
+        # work with n1
+        for i in self.topo.node[n1]['link_to']:
+            p, n = i
+            if n == n2 and p == p1:
+                if i in self.topo.node[n1]['link_to']:
+                    self.topo.node[n1]['link_to'].remove(i)
+                    log.debug('Link in Switch %s Port %s expired. Removed from topo' % (n1,p1))
+                break
+        # work with n2
+        for i in self.topo.node[n2]['link_to']:
+            p, n = i
+            if n == n1 and p == p2:
+                if i in self.topo.node[n2]['link_to']:
+                    self.topo.node[n2]['link_to'].remove(i)
+                    log.debug('Link in Switch %s Port %s expired. Removed from topo' % (n2,p2))
+                break
+        return
+
+    def link_collector(self):
+        """
+        Checks for link "freshness" and if expired, then deletes it fron the topology
+        """
+        now = time.time()
+        for u,v,d in self.topo.edges(data=True):
+            # if link older than 3*lldp_ttl, then remove it
+            if d['timestamp'] < (now - 3 * self.lldp_ttl):
+                # from both nodes remove port info
+                n1,n2 = u,v
+                p1,p2 = self.find_linking_ports(n1,n2)
+                self.delete_linking_ports(n1,p1,n2,p2)
+                self.topo.remove_edge(n1,n2)
+                log.debug('Edge between Switch [%s:%s] and Switch [%s:%s] expired. Removed from topo' % (n1,p1,n2,p2))
         
 
     def manage_topology(self, pkt, l_dpid, l_port):
@@ -77,9 +147,13 @@ class Discovery( EventMixin ):
                if not l_dpid in self.topo.nodes():
                    self.topo.add_node(l_dpid, {'link_to':[]})
 
-               # 2) is edge new?
+               # 2) is edge new? is so, add it and timestampt it
                if not ((l_dpid, r_dpid) in self.topo.edges() or (r_dpid,l_dpid) in self.topo.edges()):
-                   self.topo.add_edge(l_dpid, r_dpid)
+                   self.topo.add_edge(l_dpid, r_dpid, {'timestamp':time.time()})
+               # it not new, refresh timestamp
+               else:
+                   self.topo.edge[l_dpid][r_dpid]['timestamp'] = time.time()
+
 
                # 3) keep track of ports usage in l_dpid...l_port in l_dpid links to r_dpid 
                if l_dpid in self.topo.nodes():
