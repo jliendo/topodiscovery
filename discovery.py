@@ -58,7 +58,7 @@ class Discovery( EventMixin ):
             self.manage_topology(pkt, event.dpid, event.port)
         
 
-    def manage_topology(self, pkt, d_dpid, d_port):
+    def manage_topology(self, pkt, l_dpid, l_port):
         """Creates/Updates the topology acording to what it "hears" from LLDP"""
         # is it a well formed LLDP packet?
         if pkt.type == 0x88cc and \
@@ -67,31 +67,25 @@ class Discovery( EventMixin ):
             LLDPTTL in pkt and \
             LLDPDUEnd in pkt:
                # comodity/documentation variables
-               s_dpid = int(pkt['LLDPChassisId'].value)
-               s_port = int(pkt['LLDPPortId'].value)
-               # if no data, return
-               if not (s_dpid or s_port):
-                   log.debug('Got Invalid LLDP packet')
-                   return
+               r_dpid = int(pkt['LLDPChassisId'].value)
+               r_port = int(pkt['LLDPPortId'].value)
                #log.debug('Got LLDP packet [Switch: %s Port %s] from switch %s port %s' \
 
                # 1) if "seen" nodes are new, add them to the topology view
-               if not s_dpid in self.topo:
-                   self.topo.add_node(s_dpid, {'ports':[]} )
-               if not d_dpid in self.topo:
-                   self.topo.add_node(d_dpid, {'ports':[]} )
-               # 1.1) while we are on it, keep track of which ports are being used by source dpid
-               if not s_port in self.topo.node[s_dpid]['ports']:
-                   self.topo.node[s_dpid]['ports'].append(s_port)
-               # 1.2) and keep track of destination dpid's used ports
-               if not d_port in self.topo.node[d_dpid]['ports']:
-                   self.topo.node[d_dpid]['ports'].append(d_port)
-               # 2) add new edge to topology view, timestamp the new edge
-               if not((s_dpid, d_dpid) in self.topo.edges() or (d_dpid, s_dpid) in self.topo.edges()):
-                   self.topo.add_edge(s_dpid, d_dpid, {'time_stamp':time.time(),'s_port':s_port,'d_port':d_port})
-               # 2.1) if it is an existing edge, refresh the timestamp...edge is still alive
-               else:
-                   self.topo.edge[s_dpid][d_dpid]['time_stamp'] = time.time()
+               if not r_dpid in self.topo.nodes():
+                   self.topo.add_node(r_dpid, {'link_to':[]})
+               if not l_dpid in self.topo.nodes():
+                   self.topo.add_node(l_dpid, {'link_to':[]})
+
+               # 2) is edge new?
+               if not ((l_dpid, r_dpid) in self.topo.edges() or (r_dpid,l_dpid) in self.topo.edges()):
+                   self.topo.add_edge(l_dpid, r_dpid)
+
+               # 3) keep track of ports usage in l_dpid...l_port in l_dpid links to r_dpid 
+               if l_dpid in self.topo.nodes():
+                   if (l_port, r_dpid) not in self.topo.node[l_dpid]['link_to']:
+                       self.topo.node[l_dpid]['link_to'].append((l_port,r_dpid))
+
 
 
     def send_LLDP(self, event):
@@ -127,8 +121,17 @@ class Discovery( EventMixin ):
         """
         pos = nx.circular_layout(self.topo)
         nx.draw(self.topo, pos)
-        edge_labels = dict([((u,v),str(d['s_port'])+'-'+str(d['d_port'])) for u,v,d in self.topo.edges(data=True)])
-        nx.draw_networkx_edge_labels(self.topo, pos, edge_labels)
+        node_labels = dict([(n,d['link_to']) for n,d in self.topo.nodes(data=True)])
+
+        
+        offset = 0.05
+        pos_labels = {}
+        keys = pos.keys()
+        for key in keys:
+            x,y = pos[key]
+            pos_labels[key] = (x, y + offset)
+
+        nx.draw_networkx_labels(self.topo, pos=pos_labels, labels=node_labels, font_size=8)
         plt.show()
 
 
