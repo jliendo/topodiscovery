@@ -1,0 +1,129 @@
+Copyright (c) 2013, Javier Liendo All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list
+of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this
+list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+This is version 0.1 of Discovery.py.
+
+discovery.py is a POX component. POX is the python based openflow controller
+(http://www.noxrepo.org/pox/about-pox/).
+
+discovery.py is a small python class that can be used to create a topological
+view of a set of openflow enabled switches. The main idea behind discovery.py is
+to provide a networkx based topology component which reflects the underlying
+network giving the networking researcher a programatic object which can be
+manipulated by the many graph analysis tools provided by networkx.
+(http://networkx.github.com/)
+
+The topological view is maintained in the Discovery.topo class member. This is a
+networkx Graph() object. Each *node* has a name (i.e. 1,2,3 and so on) and a
+"link_to" attribute.  "link_to" is a list of tuples. Each tuple is a
+representation of the port_number that links from this node to another node. For
+example:
+
+If self.topo.node[1]['link_to'] gives us [(1,3),(2,4),(3,8)] this means that:
+
+- Node 1's port 1 links to node 3 
+- Node 1's port 2 links to node 4 
+- Node 1's port 3 links to node 8
+
+discovery.py works by sending crafted LLDP messages across all ports of a switch
+as soon as the switch connects to the controller. 
+
+The controller installs via openflow messages a rule to make all LLDP packets
+received by the openflow able switches to be punted to the controller.
+
+As soon as the LLDP packet is received by the controller it knows which node did
+received it from and then from the LLDP message the controller can infer the
+node name and the port number from the other side of the link. 
+
+This idea is heavely copied from the discovery component by James McCauley
+which is included in the POX distribution.  Main difference is that I'm using
+scpay as the packet manipulation library, kind of hard teaching a new trick to
+an old dog.
+
+IMPORTANT: I use scapy 2.2.0-dev. because this is the version that is providing
+LLDP layers. In order to use this POX components you have to make sure you have
+the development branch of scapy (http://hg.secdev.org/scapy-com).
+
+Each edge on the topology view has a timestamp associated. If the edge does not
+get refreshed frequently, discovery.py assumes that the link is broken and the
+removes it from the topology.
+
+Additionally, if a port goes down (for example if you use mininet's link up/down
+command), discovery.py immediately removes the link from the topology via POX's
+PortStatus event handling. No need to wait for the expiration of the link.
+
+Once the links comes up, it gets discovered by the normal LLDP packet handling.
+
+discovery.py does not discover hosts, just switches (this is one of the main
+things I have to fix ASAP).
+
+discovery.py has a nice method called graph. This method basically draws the
+network (using matplotlib.pyplot) so you can get a visual representation of the
+network as it  discovered.
+
+Usage examples:
+
+$ /home/user/pox/pox.py log.level --mycomponent.discovery=DEBUG py
+mycomponent.discovery 
+
+Where "mycomponent" has to be a directory under pox's "ext" directory. If your
+"pox and python-fu" is good enough, you then will absolutely get the idea and
+you will surely be able to place discovery.py in a directory more of your
+convenience.
+
+If you run the interactive python interpreter from pox (using the py component)
+then you can do several interesting things. 
+
+For example:
+
+POX> core.discovery.graph()
+
+will give you a nice graph giving you a visual feedbak of the network topology.
+
+If your topology is more random than tree-likem, you can use:
+
+POX> core.discovery.graph(tree=False)
+
+Another example, 
+
+POX> core.discovery.topo.nodes(data=True)
+
+will give you all the nodes and theirs associated attributes. 
+
+Same thing with edges/links:
+
+POX> core.discovery.topo.edges(data=True)
+
+Finally, in order to experiment with discovery.py (and with SDN/Openflow in
+general) I've being using mininet with the option of remote controller.
+
+
+TODO: 
+
+Many things:
+
+- Add host detection!!!
+- Give more brain power to the lldp-ttl thing. How much is good enough?
+- Kill bugs
+- Build more efficient search port functions
+- ...
