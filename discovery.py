@@ -47,14 +47,19 @@ class Discovery( EventMixin ):
 
 
     def _handle_PortStatus(self, event):
-        #XXX what to do in case of ports going down/up
-        if event.added:
-            status = 'Added'
-        elif event.deleted:
-            status = "Deleted"
-        else:
-            status = 'Modified'
-        log.debug("Switch %s Port %s Status %s" % (event.dpid, event.port, status))
+        # is port config down or port link down?
+        if event.ofp.desc.config == 1 or event.ofp.desc.config == 1:
+            n1 = event.dpid
+            p1 = event.port
+            n2 = None
+            # find node linking to n1 via p1
+            for i in self.topo.node[n1]['link_to']:
+                p, n = i
+                if p1 == p:
+                    n2 = n
+            if n1 and n2:
+                self.delete_linking_ports(n1, n2)
+                log.debug('PORT STATUS: Link between switch %s and %s is down. Link removed from topo' % (n1, n2))
 
 
     def _handle_PacketIn(self, event):
@@ -69,7 +74,7 @@ class Discovery( EventMixin ):
 
     def find_linking_ports(self, n1, n2):
         """
-        returns the port numbers that links node1 and node2 in edge
+        returns the port numbers that links node1 and node2 in edge.
         edge is a tuple, it may have attributes
         """
         p1, p2 = (None, None)
@@ -89,12 +94,18 @@ class Discovery( EventMixin ):
         # found ports
         return (p1,p2)
 
-    def delete_linking_ports(self, n1, p1, n2, p2):
+    def delete_linking_ports(self, n1, n2):
         """
-        deletes the linking information between two nodes
+        deletes the information between two nodes and removes edge from topo
         """
-        # XXX There has to be a better way to do this...
-        # work with n1
+        # search for the ports that links n1 and n2
+        p1, p2 = self.find_linking_ports(n1, n2)
+
+        if not (p1 and p2):
+            log.debug('ERROR: Could not find ports linking switch %s and %s. Could not delete' % (n1, n2))
+            return
+
+        # update n1's list of "links_to"
         for i in self.topo.node[n1]['link_to']:
             p, n = i
             if n == n2 and p == p1:
@@ -102,7 +113,7 @@ class Discovery( EventMixin ):
                     self.topo.node[n1]['link_to'].remove(i)
                     log.debug('Link in Switch %s Port %s expired. Removed from topo' % (n1,p1))
                 break
-        # work with n2
+        # update n2's list of "links_to"
         for i in self.topo.node[n2]['link_to']:
             p, n = i
             if n == n1 and p == p2:
@@ -110,22 +121,21 @@ class Discovery( EventMixin ):
                     self.topo.node[n2]['link_to'].remove(i)
                     log.debug('Link in Switch %s Port %s expired. Removed from topo' % (n2,p2))
                 break
-        return
+        # remove edge from topo
+        self.topo.remove_edge(n1,n2)
+
 
     def link_collector(self):
         """
         Checks for link "freshness" and if expired, then deletes it fron the topology
         """
         now = time.time()
-        for u,v,d in self.topo.edges(data=True):
+        for n1,n2,d in self.topo.edges(data=True):
             # if link older than 3*lldp_ttl, then remove it
             if d['timestamp'] < (now - 3 * self.lldp_ttl):
                 # from both nodes remove port info
-                n1,n2 = u,v
-                p1,p2 = self.find_linking_ports(n1,n2)
-                self.delete_linking_ports(n1,p1,n2,p2)
-                self.topo.remove_edge(n1,n2)
-                log.debug('Edge between Switch [%s:%s] and Switch [%s:%s] expired. Removed from topo' % (n1,p1,n2,p2))
+                self.delete_linking_ports(n1, n2)
+                log.debug('COLLECTOR: Edge between switch %s and %s expired. Removed from topo' % (n1,n2))
         
 
     def manage_topology(self, pkt, l_dpid, l_port):
@@ -189,7 +199,7 @@ class Discovery( EventMixin ):
                 pkt.data = bytes(lldp_p)
                 event.connection.send(pkt)
 
-    def graph(self, tree=True):
+    def graph(self, tree):
         """
         Draws the current view of the topology. No hosts, just switches
         """
@@ -212,7 +222,7 @@ class Discovery( EventMixin ):
         nx.draw_networkx_labels(self.topo, pos=pos_labels, labels=node_labels, font_size=8)
         plt.show()
 
-
 def launch():
+    plt.ion()
     core.register('discovery', Discovery())
     log.debug('Discovery registered')
