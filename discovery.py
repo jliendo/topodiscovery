@@ -19,7 +19,8 @@ class Discovery( EventMixin ):
         # send lldp every ldp ttl seconds
         self.lldp_ttl = 1
         core.openflow.addListeners(self)
-        # XXX what should be the link_collector interval???
+        # XXX what should be the link_collector (checking for "freshness" of links
+        # between nodes) interval???
         Timer(self.lldp_ttl * 3, self.link_collector, recurring = True)
         log.debug('Link collector started')
 
@@ -199,7 +200,7 @@ class Discovery( EventMixin ):
                 pkt.data = bytes(lldp_p)
                 event.connection.send(pkt)
 
-    def graph(self, tree):
+    def graph(self, tree=True):
         """
         Draws the current view of the topology. No hosts, just switches
         """
@@ -223,6 +224,5 @@ class Discovery( EventMixin ):
         plt.show()
 
 def launch():
-    plt.ion()
     core.register('discovery', Discovery())
     log.debug('Discovery registered')
