@@ -1,3 +1,4 @@
+"""
 Copyright (c) 2013, Javier Liendo All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
@@ -20,6 +21,7 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
 TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+"""
 
 
 from pox.core import core
@@ -29,6 +31,7 @@ import pox.openflow.libopenflow_01 as of
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
+from util import *
 from scapy.all import *
 
 log = core.getLogger()
@@ -38,19 +41,22 @@ class Discovery( EventMixin ):
     def __init__(self):
         # networkx representation of the topology
         self.topo = nx.Graph()
+        # global mac-address-table (dpid, port, mac, ip)
+        self.gmat = []
         # list of switches already scheduled w/sendLLDP
         self.scheduled_switches = []
         # send lldp every ldp ttl seconds
         self.lldp_ttl = 1
+        # listen to all pox/openflow events
         core.openflow.addListeners(self)
         # XXX what should be the link_collector (checking for "freshness" of links
         # between nodes) interval???
         Timer(self.lldp_ttl * 3, self.link_collector, recurring = True)
-        log.debug('Link collector started')
+        log.info('Discovery link collector started')
 
 
     def _handle_ConnectionUp(self, event):
-        # install flow for all LLDP packets forward to controller
+        # install flow for all LLDP packets to be forward to controller
         msg = of.ofp_flow_mod()
         # LLDP Ether type
         msg.match.dl_type = 0x88cc
@@ -59,7 +65,7 @@ class Discovery( EventMixin ):
         # LLDPs to controller
         msg.actions.append(of.ofp_action_output(port = of.OFPP_CONTROLLER))
         event.connection.send(msg)
-        log.debug('LLDP flow configuration sent. Switch: %s' % event.dpid)
+        log.debug('LLDP flow-mod configuration sent. Switch: %s' % event.dpid)
         # if dpid no scheduled, then do it!
         if not event.dpid in self.scheduled_switches:
             Timer(self.lldp_ttl, self.send_LLDP, args = [event], recurring = True)
@@ -68,23 +74,20 @@ class Discovery( EventMixin ):
 
     def _handle_ConnectionDown(self, event):
         #XXX delete switch from list of scheduled switch
-        log.debug("Switch %s is DOWN" % event.dpid)
+        log.info("Switch %s is DOWN" % event.dpid)
 
 
     def _handle_PortStatus(self, event):
         # is port config down or port link down?
         if event.ofp.desc.config == 1 or event.ofp.desc.config == 1:
+            # convenience variables
             n1 = event.dpid
             p1 = event.port
-            n2 = None
-            # find node linking to n1 via p1
-            for i in self.topo.node[n1]['link_to']:
-                p, n = i
-                if p1 == p:
-                    n2 = n
+            (n2, p2) = get_remote_links(self.topo, n1, p1)
             if n1 and n2:
-                self.delete_linking_ports(n1, n2)
-                log.debug('PORT STATUS: Link between switch %s and %s is down. Link removed from topo' % (n1, n2))
+                delete_edge(self.topo, n1, n2)
+                log.info('PORT STATUS: Link between switch %s and %s is down. Link removed from topo' % (n1, n2))
+        # XXX code to handle when port comes up?
 
 
     def _handle_PacketIn(self, event):
@@ -96,58 +99,9 @@ class Discovery( EventMixin ):
         if pkt.type == 0x88cc: 
             self.manage_topology(pkt, event.dpid, event.port)
 
-
-    def find_linking_ports(self, n1, n2):
-        """
-        returns the port numbers that links node1 and node2 in edge.
-        edge is a tuple, it may have attributes
-        """
-        p1, p2 = (None, None)
-        # XXX There has to be a better way to find the linking ports...
-        # works on node1
-        for i in self.topo.node[n1]['link_to']:
-            p, n = i
-            if n == n2: 
-                p1 = p
-                break
-        # works on node2
-        for i in self.topo.node[n2]['link_to']:
-            p, n = i
-            if n == n1: 
-                p2 = p
-                break
-        # found ports
-        return (p1,p2)
-
-    def delete_linking_ports(self, n1, n2):
-        """
-        deletes the information between two nodes and removes edge from topo
-        """
-        # search for the ports that links n1 and n2
-        p1, p2 = self.find_linking_ports(n1, n2)
-
-        if not (p1 and p2):
-            log.debug('ERROR: Could not find ports linking switch %s and %s. Could not delete' % (n1, n2))
-            return
-
-        # update n1's list of "links_to"
-        for i in self.topo.node[n1]['link_to']:
-            p, n = i
-            if n == n2 and p == p1:
-                if i in self.topo.node[n1]['link_to']:
-                    self.topo.node[n1]['link_to'].remove(i)
-                    log.debug('Link in Switch %s Port %s expired. Removed from topo' % (n1,p1))
-                break
-        # update n2's list of "links_to"
-        for i in self.topo.node[n2]['link_to']:
-            p, n = i
-            if n == n1 and p == p2:
-                if i in self.topo.node[n2]['link_to']:
-                    self.topo.node[n2]['link_to'].remove(i)
-                    log.debug('Link in Switch %s Port %s expired. Removed from topo' % (n2,p2))
-                break
-        # remove edge from topo
-        self.topo.remove_edge(n1,n2)
+        # if arp discover host
+        if pkt.type == 0x0806:
+            self.manage_hosts(pkt, event.dpid, event.port)
 
 
     def link_collector(self):
@@ -155,16 +109,17 @@ class Discovery( EventMixin ):
         Checks for link "freshness" and if expired, then deletes it fron the topology
         """
         now = time.time()
-        for n1,n2,d in self.topo.edges(data=True):
+        for n1, n2, d in self.topo.edges(data = True):
             # if link older than 3*lldp_ttl, then remove it
             if d['timestamp'] < (now - 3 * self.lldp_ttl):
                 # from both nodes remove port info
-                self.delete_linking_ports(n1, n2)
-                log.debug('COLLECTOR: Edge between switch %s and %s expired. Removed from topo' % (n1,n2))
-        
+                delete_edge(self.topo, n1, n2)
+
 
     def manage_topology(self, pkt, l_dpid, l_port):
-        """Creates/Updates the topology acording to what it "hears" from LLDP"""
+        """
+        Creates/Updates the topology acording to what it "hears" from LLDP
+        """
         # is it a well formed LLDP packet?
         if pkt.type == 0x88cc and \
             LLDPChassisId in pkt and \
@@ -181,33 +136,43 @@ class Discovery( EventMixin ):
                    self.topo.add_node(r_dpid, {'link_to':[]})
                if not l_dpid in self.topo.nodes():
                    self.topo.add_node(l_dpid, {'link_to':[]})
-
                # 2) is edge new? is so, add it and timestampt it
                if not ((l_dpid, r_dpid) in self.topo.edges() or (r_dpid,l_dpid) in self.topo.edges()):
                    self.topo.add_edge(l_dpid, r_dpid, {'timestamp':time.time()})
                # it not new, refresh timestamp
                else:
                    self.topo.edge[l_dpid][r_dpid]['timestamp'] = time.time()
-
-
                # 3) keep track of ports usage in l_dpid...l_port in l_dpid links to r_dpid 
                if l_dpid in self.topo.nodes():
                    if (l_port, r_dpid) not in self.topo.node[l_dpid]['link_to']:
                        self.topo.node[l_dpid]['link_to'].append((l_port,r_dpid))
 
 
+    def manage_hosts(self, pkt, dpid, port):
+        """
+        Manages the global mac-address-table
+        """
+        # XXX one mac/ip per port?
+        if pkt.type == 0x0806 and ARP in pkt and pkt[ARP].op in [1,2]:
+            if not(dict(dpid = dpid, port = port, mac = pkt.hwsrc, ip = pkt.psrc) in self.gmat):
+                self.gmat.append(dict(dpid = dpid, port = port, mac = pkt.hwsrc, ip = pkt.psrc))
+                log.debug('New host: %s at %s' % (pkt.psrc, pkt.hwsrc))
+            
+
 
     def send_LLDP(self, event):
-        """creates a LLDP packet and sends it through all dpid's ports.
-        This packet is sent through all of dpid's ports every 
-        self.lldp_ttl seconds"""
+        """
+        Creates a LLDP packet and sends it to all dpid's ports.
+        This packet is sent to all of dpid's ports every 
+        self.lldp_ttl seconds
+        """
         # note-to-self: event.ofp is of ofp_features_reply type
-        # note-to-self: event.ofp.ports has all the ports defined in this dpid
+        # note-to-self: event.ofp.ports has all the port inventory in this dpid
         # LLDP destination address
         dst = '01:80:c2:00:00:0e'
         # LLDP ethertype
         type = 0x88cc
-        # note-to-self: ofp.ports == all ports in the dpid
+        # note-to-self: ofp.ports == port inventory for dpid
         for p in event.ofp.ports:
             if p.port_no < of.OFPP_MAX:
                 chassis_id = event.dpid
@@ -218,11 +183,11 @@ class Discovery( EventMixin ):
                         LLDPPortId(subtype = 7, macaddr = src, value = port)/\
                         LLDPTTL(seconds = self.lldp_ttl)/\
                         LLDPDUEnd()
-                #log.debug("dpid: %d port_no: %s hw_addr: %s" % (event.dpid, p.port_no, p.hw_addr))
                 # send LLDP packet
                 pkt = of.ofp_packet_out(action = of.ofp_action_output(port = port))
                 pkt.data = bytes(lldp_p)
                 event.connection.send(pkt)
+
 
     def graph(self, tree=True):
         """
@@ -249,4 +214,4 @@ class Discovery( EventMixin ):
 
 def launch():
     core.register('discovery', Discovery())
-    log.debug('Discovery registered')
+    log.info('Discovery registered')
