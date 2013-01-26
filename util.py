@@ -60,7 +60,6 @@ def get_remote_links(g, n1, p1):
     """
     n2 = [n for i, (p,n) in enumerate(g.node[n1]['link_to']) if p == p1]
     # if there is no edge between n1 and n2, no need to do anything
-    # (n1,n2) may have been deleted and this is a race condition
     if not n2:
         return (None, None)
     # XXX super ugly...fix comprenhension to not return list

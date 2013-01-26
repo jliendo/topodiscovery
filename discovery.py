@@ -73,8 +73,16 @@ class Discovery( EventMixin ):
 
 
     def _handle_ConnectionDown(self, event):
-        #XXX delete switch from list of scheduled switch
-        log.info("Switch %s is DOWN" % event.dpid)
+        n1 = event.dpid
+        if n1 in self.topo.nodes():
+            log.info("Switch %s is DOWN" % n1)
+            neighboring_nodes = [n for i, (p, n) in enumerate(self.topo.node[n1]['link_to'])]
+            for n in neighboring_nodes:
+                delete_edge(self.topo, n1, n)
+            # remove node from topological view
+            self.topo.remove_node(n1)
+            # remove switch from LLDP send scheduled dpids
+            self.scheduled_switches.remove(n1)
 
 
     def _handle_PortStatus(self, event):
