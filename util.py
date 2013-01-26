@@ -30,6 +30,9 @@ p2 of n1 links to n3
 p3 of n1 links to n4
 
 """
+from pox.core import core
+
+log = core.getLogger()
 
 def get_linking_ports(g, n1, n2):
     """
@@ -42,21 +45,32 @@ def get_linking_ports(g, n1, n2):
     # p2 is the port from n2 pointing to n1
     p1 = [p for i, (p,n) in enumerate(g.node[n1]['link_to']) if n == n2]
     p2 = [p for i, (p,n) in enumerate(g.node[n2]['link_to']) if n == n1]
-    if not (p1 and p2): return()
+    if not (p1 and p2): 
+        return (None, None)
     # XXX ugly...fix comprenhension to not return list
-    return (p1.pop(), p2.pop())
+    p1 = p1.pop()
+    p2 = p2.pop()
+    return (p1, p2)
 
 
-def get_remote_link(g, n1, p1):
+def get_remote_links(g, n1, p1):
     """
     returns the remote node and remote port pointed by port 'p1' in node 'n1' in g
     returns tuple (n2, p2)
     """
     n2 = [n for i, (p,n) in enumerate(g.node[n1]['link_to']) if p == p1]
+    # if there is no edge between n1 and n2, no need to do anything
+    # (n1,n2) may have been deleted and this is a race condition
+    if not n2:
+        return (None, None)
+    # XXX super ugly...fix comprenhension to not return list
+    n2 = n2.pop()
     p2 = [p for i, (p,n) in enumerate(g.node[n2]['link_to']) if n == n1]
-    if not(n2 and p2): return
+    if not p2: 
+        return (None, None)
     # XXX ugly...fix comprenhension to not return list
-    return (n2.pop(), p2.pop())
+    p2 = p2.pop()
+    return (n2, p2)
 
 
 def delete_edge(g, n1, n2):
@@ -76,7 +90,6 @@ def delete_edge(g, n1, n2):
         g.node[n2]['link_to'].remove((p2, n1))
         log.info('Switch %s Port %s DOWN' % (n2, p2))
     # remove edge from topo
-    if (n1,n2) in g.edges():
-        g.remove_edge(n1,n2)
-        log.info('Link between switch %s and switch %s removed' % (n1, n2))
+    g.remove_edge(n1,n2)
+    log.debug('Link between switch %s and switch %s removed' % (n1, n2))
 

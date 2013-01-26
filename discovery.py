@@ -83,7 +83,10 @@ class Discovery( EventMixin ):
             # convenience variables
             n1 = event.dpid
             p1 = event.port
+            #log.debug('*** trying to bring Switch %s Port %s DOWN' % (n1, p1))
             (n2, p2) = get_remote_links(self.topo, n1, p1)
+            # remove edge only if it exists, duh!
+            # if edge does not exists, n2 is going to be to None
             if n1 and n2:
                 delete_edge(self.topo, n1, n2)
                 log.info('PORT STATUS: Link between switch %s and %s is down. Link removed from topo' % (n1, n2))
