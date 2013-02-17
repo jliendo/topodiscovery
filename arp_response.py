@@ -38,6 +38,7 @@ class ArpResponse( EventMixin ):
             return
         # type is ARP, but do we really have an ARP packet?
         if not ARP in pkt:
+            log.error('ARP_RESPONSE: Received bad ARP Packet')
             return
         # is it an ARP request?
         if pkt[ARP].op == 1:

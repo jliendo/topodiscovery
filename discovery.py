@@ -43,12 +43,25 @@ class Discovery( EventMixin ):
         self.topo = nx.Graph()
         # global mac-address-table (dpid, port, mac, ip)
         self.gmat = []
+
+        # XXX super temporal...avoid ARP discovering while troubleshooting
+        # assumes mininet started with '--mac' option and topo has to mandatory
+        # have only 7 nodes
+        self.gmat = [dict(ip='10.0.0.1',mac='00:00:00:00:00:01',dpid=1,port=1),
+                     dict(ip='10.0.0.2',mac='00:00:00:00:00:02',dpid=2,port=1),
+                     dict(ip='10.0.0.3',mac='00:00:00:00:00:03',dpid=3,port=1),
+                     dict(ip='10.0.0.4',mac='00:00:00:00:00:04',dpid=4,port=1),
+                     dict(ip='10.0.0.5',mac='00:00:00:00:00:05',dpid=5,port=1),
+                     dict(ip='10.0.0.6',mac='00:00:00:00:00:06',dpid=6,port=1),
+                     dict(ip='10.0.0.7',mac='00:00:00:00:00:07',dpid=7,port=1)]
         # list of switches already scheduled w/sendLLDP
         self.scheduled_switches = []
         # send lldp every ldp ttl seconds
         self.lldp_ttl = 1
         # listen to all pox/openflow events
         core.openflow.addListeners(self)
+
+
         # XXX what should be the link_collector (checking for "freshness" of links
         # between nodes) interval???
         Timer(self.lldp_ttl * 3, self.link_collector, recurring = True)
@@ -56,6 +69,13 @@ class Discovery( EventMixin ):
 
 
     def _handle_ConnectionUp(self, event):
+
+        # XXX while debugging del all flows from switches
+        msg = of.ofp_flow_mod(command = of.OFPFC_DELETE)
+        conn = core.openflow.getConnection(event.dpid)
+        conn.send(msg)
+        log.debug('DISCOVERY: Clearing all flows from %s' % event.dpid)
+
         # install flow for all LLDP packets to be forward to controller
         msg = of.ofp_flow_mod()
         # LLDP Ether type
@@ -71,7 +91,17 @@ class Discovery( EventMixin ):
             Timer(self.lldp_ttl, self.send_LLDP, args = [event], recurring = True)
             self.scheduled_switches.append(event.dpid)
 
+        # install flow for al ARP packets to be forwarded to controller
+        msg = of.ofp_flow_mod()
+        # ARP Ether type
+        msg.match.dl_type = 0x0806
+        msg.match.dl_dst = '\xff\xff\xff\xff\xff\xff'
+        # ARPs to controller
+        msg.actions.append(of.ofp_action_output(port = of.OFPP_CONTROLLER))
+        event.connection.send(msg)
+        log.debug('ARP flow-mod configuration sent. Switch: %s' % event.dpid)
 
+    
     def _handle_ConnectionDown(self, event):
         n1 = event.dpid
         if n1 in self.topo.nodes():
