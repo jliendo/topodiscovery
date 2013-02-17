@@ -92,3 +92,45 @@ def delete_edge(g, n1, n2):
     g.remove_edge(n1,n2)
     log.debug('Link between switch %s and switch %s removed' % (n1, n2))
 
+
+def find_dpid_port_by_ip(ip):
+    """
+    finds dpid and port in which IP is located
+    """
+    p = [(x['dpid'],x['port']) for x in core.discovery.gmat if x['ip'] == ip]
+    if not p:
+        return (None, None)
+    else:
+        return p.pop()
+
+def find_dpid_port_by_mac(mac):
+    """
+    finds dpid and port in which IP is located
+    """
+    p = [(x['dpid'],x['port']) for x in core.discovery.gmat if x['mac'] == mac]
+    if not p:
+        return (None, None)
+    else:
+        return p.pop()
+
+def find_mac_by_dpid_port(dpid, port):
+    """
+    finds what mac is located at dpid and port
+    """
+    p = [x['mac'] for x in core.discovery.gmat if x['dpid'] == dpid and x['port'] == port]
+    if not p:
+        return None
+    else:
+        return p.pop()
+
+def find_ip_by_dpid_port(dpid, port):
+    """
+    finds what IP is located at dpid and port
+    """
+    p = [x['ip'] for x in core.discovery.gmat if x['dpid'] == dpid and x['port'] == port]
+    if not p:
+        return None
+    else:
+        return p.pop()
+
+
