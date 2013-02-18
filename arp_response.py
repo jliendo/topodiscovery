@@ -42,14 +42,14 @@ class ArpResponse( EventMixin ):
             return
         # is it an ARP request?
         if pkt[ARP].op == 1:
-            log.debug('ARP_RESPONSE: got ARP Request packet')
             # XXX Have to check if the src hwaddr and paddr are already in the
             # gmat, if not, then add it?
-            src = self.controller_mac
+            is_at = [x['mac'] for x in core.discovery.gmat if  x['ip'] == pkt[ARP].pdst].pop()
+            src = is_at
             dst = pkt[Ether].src
             type = pkt[Ether].type
             # we are proxy'ing for the pdst
-            hwsrc = self.controller_mac
+            hwsrc = is_at
             psrc = pkt[ARP].pdst
             hwdst = pkt[ARP].hwsrc
             pdst =pkt[ARP].psrc
@@ -58,6 +58,7 @@ class ArpResponse( EventMixin ):
             arp_reply = Ether(src=src, dst=dst, type=type)/\
                         ARP(hwsrc=hwsrc, psrc=psrc, hwdst=hwdst, pdst=pdst, op=op)
             # create openflow message
+            log.debug('ARP_RESPONSE: Got ARP who-has for %s. Sent %s is-at %s' % (pkt[ARP].pdst, pkt[ARP].pdst, is_at))
             msg = of.ofp_packet_out()
             # send the arp reply from the same port the request was received
             msg.actions.append(of.ofp_action_output(port = event.port))
@@ -69,6 +70,9 @@ class ArpResponse( EventMixin ):
 
 
 def launch():
-    component = ArpResponse()
-    core.register('arp_response', component)
-    log.debug("ARP_RESPONSE: arp_response component registered")
+    if core.hasComponent('discovery'):
+        component = ArpResponse()
+        core.register('arp_response', component)
+        log.debug("ARP_RESPONSE: arp_response component registered")
+    else:
+        log.debug("ARP_RESPONSE: arp_response *not* loaded. Missing dependencies")
