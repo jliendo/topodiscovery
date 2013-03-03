@@ -31,6 +31,7 @@ import pox.openflow.libopenflow_01 as of
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
+import threading
 from util import *
 from scapy.all import *
 
@@ -198,8 +199,6 @@ class Discovery( EventMixin ):
             if not(dict(dpid = dpid, port = port, mac = pkt.hwsrc, ip = pkt.psrc) in self.gmat):
                 self.gmat.append(dict(dpid = dpid, port = port, mac = pkt.hwsrc, ip = pkt.psrc))
                 log.debug('New host: %s at %s' % (pkt.psrc, pkt.hwsrc))
-            
-
 
     def send_LLDP(self, event):
         """
@@ -230,10 +229,11 @@ class Discovery( EventMixin ):
                 event.connection.send(pkt)
 
 
-    def graph(self, tree=True):
+    def graph(self, tree=False):
         """
         Draws the current view of the topology. No hosts, just switches
         """
+        plt.ion()
         if tree:
             pos = nx.graphviz_layout(self.topo, prog='dot')
             offset = 10
